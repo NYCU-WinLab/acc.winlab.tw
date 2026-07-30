@@ -22,7 +22,8 @@ human needs to confirm.
 | `lib/scan/probe.ts`   | Verdict rules + the control-fingerprint sample                                    |
 | `lib/scan/archive.ts` | Unzips archives to prove they hold real files                                     |
 | `hooks/use-scan.ts`   | The scan orchestrator — runs in the browser, not the server                       |
-| `app/api/scan/*`      | One stateless batch endpoint per phase                                            |
+| `lib/scan/store.ts`   | Redis: last result, per-visitor cooldown, and the live-scan broadcast             |
+| `app/api/scan/*`      | One stateless batch endpoint per phase, plus `live` for the broadcast             |
 
 ## Three decisions worth not undoing
 
@@ -30,6 +31,14 @@ human needs to confirm.
 serverless function is capped in seconds. So the client walks through batches and
 each endpoint stays stateless. This is also why the log shows real progress
 instead of a spinner. Do not "simplify" it into one long server-side scan.
+
+**The scan is shared, but only the summary lives on the server.** The browser
+still drives every batch; it just publishes phase, counts, and the latest log
+line to `acc:live` while it works. Other visitors read that from
+`/api/scan/result` and watch instead of starting a second pass, and the key's
+90-second TTL is the liveness check, so a closed tab needs no cleanup call. The
+per-batch work is deliberately still stateless — do not move the crawl itself
+onto the server to "make sharing easier".
 
 **Never use HEAD against the target.** Its WAF answers every HEAD with 403.
 Existence is proven with a ranged GET, and the stream is cancelled once enough

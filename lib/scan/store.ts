@@ -2,10 +2,18 @@ import { createHash } from "node:crypto";
 import { Redis } from "@upstash/redis";
 
 import { target } from "./target";
-import type { ScanSummary } from "./types";
+import type { LiveScan, ScanSummary } from "./types";
 
 const LAST_SCAN_KEY = "acc:last-scan";
+const LIVE_KEY = "acc:live";
 const COOLDOWN_PREFIX = "acc:cooldown:";
+
+/**
+ * How long a published live scan survives without a refresh. Long enough to
+ * cover one slow batch, short enough that an abandoned tab stops blocking the
+ * next scan. The client refreshes far more often than this.
+ */
+const LIVE_TTL_SECONDS = 90;
 
 /**
  * Redis is optional on purpose. Without it the app still scans; it just cannot
@@ -49,6 +57,40 @@ export async function saveScan(summary: ScanSummary): Promise<void> {
     await redis.set(LAST_SCAN_KEY, summary);
   } catch {
     // A failed cache write must not fail the scan the user just waited for.
+  }
+}
+
+export async function readLive(): Promise<LiveScan | null> {
+  const redis = client();
+  if (!redis) return null;
+  try {
+    return (await redis.get<LiveScan>(LIVE_KEY)) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Publishes (or refreshes) the in-flight scan. The TTL is the heartbeat. */
+export async function writeLive(state: LiveScan): Promise<void> {
+  const redis = client();
+  if (!redis) return;
+  try {
+    await redis.set(LIVE_KEY, state, { ex: LIVE_TTL_SECONDS });
+  } catch {
+    // Best-effort: losing the broadcast must not stop the scan itself.
+  }
+}
+
+/** Only the visitor who started the scan may retract it. */
+export async function clearLive(visitor: string): Promise<void> {
+  const redis = client();
+  if (!redis) return;
+  try {
+    const current = await redis.get<LiveScan>(LIVE_KEY);
+    if (current && current.by !== visitor) return;
+    await redis.del(LIVE_KEY);
+  } catch {
+    // The TTL will clear it anyway.
   }
 }
 

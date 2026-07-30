@@ -12,19 +12,22 @@ export function ScanPanel() {
   const {
     phase,
     running,
+    watching,
     log,
     progress,
     findings,
     summary,
     cooldown,
     shared,
+    live,
+    liveMine,
     start,
     stop,
   } = useScan();
 
   const dead = findings.filter((finding) => finding.severity === "dead");
   const suspect = findings.filter((finding) => finding.severity === "suspect");
-  const blocked = cooldown > 0 && !running;
+  const cooling = cooldown > 0 && !running && !watching;
 
   return (
     <Stack gap="lg">
@@ -32,11 +35,11 @@ export function ScanPanel() {
         <div className="flex flex-wrap items-center gap-3">
           <Button
             size="lg"
-            loading={running}
-            disabled={blocked}
+            loading={running || watching}
+            disabled={cooling || watching}
             onClick={() => void start()}
           >
-            {running ? "掃描中" : "開始掃描"}
+            {running ? "掃描中" : watching ? "有人在掃描" : "開始掃描"}
           </Button>
           {running ? (
             <Button variant="ghost" onClick={stop}>
@@ -48,17 +51,26 @@ export function ScanPanel() {
               {progress.label} {progress.done}/{progress.total}
             </span>
           ) : null}
+          {watching && live ? (
+            <span className="font-mono text-xs text-foreground/50">
+              {live.label}
+              {live.total > 0 ? ` ${live.done}/${live.total}` : ""}
+            </span>
+          ) : null}
         </div>
-        {blocked ? (
+        {watching && live ? (
           <p className="text-sm text-foreground/50">
-            剛剛掃過了。為了不對主計室伺服器造成負擔，請於{" "}
-            {formatCooldown(cooldown)} 後再試，以下是上次的結果。
+            {liveMine ? "你的掃描" : "其他人"}正在掃描，{live.note || "進行中"}
+            。完成後這裡會自動顯示結果。
           </p>
         ) : null}
-        {!running && !blocked && findings.length === 0 && phase !== "done" ? (
+        {cooling ? (
           <p className="text-sm text-foreground/50">
-            一次完整掃描約 2 到 4 分鐘，過程會逐步顯示在下方。
+            剛掃過，{formatCooldown(cooldown)} 後可再掃。以下是上次結果。
           </p>
+        ) : null}
+        {!running && !watching && !cooling && phase !== "done" ? (
+          <p className="text-sm text-foreground/50">約 2 到 4 分鐘。</p>
         ) : null}
       </Stack>
 
@@ -70,17 +82,17 @@ export function ScanPanel() {
         <Stack gap="default">
           <FindingBlock
             title="確定的問題"
-            description="已驗證為失效或自相矛盾，可以直接交辦修正。"
+            description="已驗證失效，可直接交辦。"
             findings={dead}
             severity="dead"
-            emptyText="沒有發現失效的資源。"
+            emptyText="沒有失效的資源。"
           />
           <FindingBlock
             title="可能有問題"
-            description="需要人工確認，多半是對方網站阻擋自動檢測，或無法從外部斷定。"
+            description="多半是對方擋自動檢測，需人工確認。"
             findings={suspect}
             severity="suspect"
-            emptyText="沒有需要人工確認的項目。"
+            emptyText="沒有待確認項目。"
           />
         </Stack>
       ) : null}
@@ -115,7 +127,7 @@ function Summary({
       </div>
       <p className="text-xs text-foreground/35">
         掃描時間 {finished.toLocaleString("zh-TW", { hour12: false })}
-        {shared ? "" : "（未設定共用儲存，結果只留在這次瀏覽）"}
+        {shared ? "" : "（未接共用儲存，結果不會保留）"}
       </p>
     </div>
   );

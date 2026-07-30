@@ -4,32 +4,17 @@ import { Container } from "@/components/blocks/container";
 import { Corner } from "@/components/blocks/corner";
 import { Stack } from "@/components/blocks/stack";
 import { ScanPanel } from "@/components/scan-panel";
-import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { target } from "@/lib/scan/target";
 
 export default function Page() {
   return (
     <>
-      <Corner at="top-left" className="text-xs text-foreground/60">
+      <Corner at="top-left">
         <Link href="/" className="hover:text-foreground">
           Acc
         </Link>
       </Corner>
-      <Corner at="top-right" className="text-xs text-foreground/60">
-        <a
-          href="https://portal.winlab.tw"
-          className="hover:text-foreground"
-          rel="noreferrer noopener"
-        >
-          Portal
-        </a>
-      </Corner>
-      <Corner at="bottom-left">
-        <ThemeToggle hotkey="d" />
-      </Corner>
-      <Corner at="bottom-right" className="text-xs text-foreground/60">
-        © {new Date().getFullYear()}
-      </Corner>
+      <Corner at="bottom-right">© {new Date().getFullYear()}</Corner>
 
       <Container className="py-20">
         <Stack gap="lg">
@@ -45,7 +30,7 @@ export default function Page() {
               >
                 {target.label}
               </a>{" "}
-              網站上的附件、外部連結與 email 是否仍然有效。
+              的附件、外部連結與 email。
             </p>
           </Stack>
           <ScanPanel />
@@ -59,14 +44,8 @@ export default function Page() {
 function Notes() {
   return (
     <div className="flex flex-col gap-1 text-xs text-foreground/35">
-      <p>
-        檢查方式：附件會實際下載並驗證檔頭，壓縮檔會解開確認裡面真的有檔案，
-        email 會比對連結與畫面顯示是否一致並查詢網域 MX 記錄。
-      </p>
-      <p>
-        兩點外部掃描無法回答：email 帳號是否存在（需以人員名單內部核對），
-        以及沒有任何連結指向的孤島頁面。
-      </p>
+      <p>附件實際下載並解壓驗證，email 比對顯示文字並查 MX。</p>
+      <p>查不到：email 帳號是否存在、沒有連結指向的孤島頁面。</p>
     </div>
   );
 }

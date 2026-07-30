@@ -7,6 +7,7 @@ import type {
   ControlFingerprint,
   EmailResult,
   Finding,
+  LiveScan,
   PageResult,
   ResourceResult,
   ScanSummary,
@@ -22,6 +23,8 @@ export type Phase =
   | "saving"
   | "done"
   | "cooldown"
+  /** Someone else is scanning; this tab follows along. */
+  | "watching"
   | "error";
 
 export interface LogLine {
@@ -40,6 +43,17 @@ export interface Progress {
 const BATCH = { pages: 20, resources: 50, archives: 8, emails: 120 } as const;
 const MAX_PAGES = 1200;
 const ARCHIVE_NAME_RE = /\.(zip|odt|ods|odp|docx|xlsx|pptx)$/i;
+/** Heartbeat floor while scanning, and poll interval while watching. */
+const BEAT_MS = 2000;
+const WATCH_MS = 3000;
+
+interface ScanState {
+  lastScan: ScanSummary | null;
+  live: LiveScan | null;
+  liveMine: boolean;
+  cooldownRemaining: number;
+  shared: boolean;
+}
 
 /**
  * The browser drives the scan.
@@ -56,6 +70,8 @@ export function useScan() {
   const [summary, setSummary] = React.useState<ScanSummary | null>(null);
   const [cooldown, setCooldown] = React.useState(0);
   const [shared, setShared] = React.useState(false);
+  const [live, setLive] = React.useState<LiveScan | null>(null);
+  const [liveMine, setLiveMine] = React.useState(false);
   const abort = React.useRef<AbortController | null>(null);
 
   const say = React.useCallback(
@@ -66,34 +82,64 @@ export function useScan() {
     []
   );
 
-  // Load whatever the last scan found, so a first-time visitor sees results
-  // without hitting the target site.
+  /** Adopt the server's view: the cached result, plus any scan in flight. */
+  const sync = React.useCallback(async (): Promise<ScanState | null> => {
+    try {
+      const response = await fetch("/api/scan/result", { cache: "no-store" });
+      return (await response.json()) as ScanState;
+    } catch {
+      // A missing cache is not an error worth showing.
+      return null;
+    }
+  }, []);
+
+  // On load, show the last scan's result without touching the target site, and
+  // fall in behind a scan that is already running.
   React.useEffect(() => {
     let cancelled = false;
     void (async () => {
-      try {
-        const response = await fetch("/api/scan/result", { cache: "no-store" });
-        const data = (await response.json()) as {
-          lastScan: ScanSummary | null;
-          cooldownRemaining: number;
-          shared: boolean;
-        };
-        if (cancelled) return;
-        setShared(data.shared);
-        setCooldown(data.cooldownRemaining);
-        if (data.lastScan) {
-          setSummary(data.lastScan);
-          setFindings(data.lastScan.findings);
-          setPhase("done");
-        }
-      } catch {
-        // A missing cache is not an error worth showing.
+      const data = await sync();
+      if (!data || cancelled) return;
+      setShared(data.shared);
+      setCooldown(data.cooldownRemaining);
+      setLive(data.live);
+      setLiveMine(data.liveMine);
+      if (data.lastScan) {
+        setSummary(data.lastScan);
+        setFindings(data.lastScan.findings);
       }
+      setPhase(data.live ? "watching" : data.lastScan ? "done" : "idle");
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [sync]);
+
+  // While another tab drives the scan, poll until it lets go, then adopt the
+  // result it saved.
+  React.useEffect(() => {
+    if (phase !== "watching") return;
+    let cancelled = false;
+    const timer = setInterval(() => {
+      void (async () => {
+        const data = await sync();
+        if (!data || cancelled) return;
+        setLive(data.live);
+        setLiveMine(data.liveMine);
+        setCooldown(data.cooldownRemaining);
+        if (data.live) return;
+        if (data.lastScan) {
+          setSummary(data.lastScan);
+          setFindings(data.lastScan.findings);
+        }
+        setPhase(data.lastScan ? "done" : "idle");
+      })();
+    }, WATCH_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [phase, sync]);
 
   React.useEffect(() => {
     if (cooldown <= 0) return;
@@ -103,6 +149,12 @@ export function useScan() {
     );
     return () => clearInterval(timer);
   }, [cooldown]);
+
+  /** Give up the live channel so the next visitor is not blocked by a TTL. */
+  const retract = React.useCallback(() => {
+    setLive(null);
+    void fetch("/api/scan/live", { method: "DELETE" }).catch(() => {});
+  }, []);
 
   const start = React.useCallback(async () => {
     abort.current?.abort();
@@ -115,13 +167,41 @@ export function useScan() {
         body: JSON.stringify(body),
         signal: controller.signal,
       });
-      if (!response.ok && response.status !== 429) {
+      // 429 (cooldown) and 409 (someone else is scanning) are answers, not
+      // failures: their bodies say what to show.
+      if (!response.ok && response.status !== 429 && response.status !== 409) {
         throw new Error(`${path} 回應 HTTP ${response.status}`);
       }
       return (await response.json()) as T;
     };
 
     const startedAt = new Date();
+    const startedAtIso = startedAt.toISOString();
+    let lastBeat = 0;
+    /** Publish progress for other visitors. Fire-and-forget, throttled. */
+    const beat = (
+      label: string,
+      done: number,
+      total: number,
+      note: string,
+      force = false
+    ) => {
+      const now = Date.now();
+      if (!force && now - lastBeat < BEAT_MS) return;
+      lastBeat = now;
+      void fetch("/api/scan/live", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          startedAt: startedAtIso,
+          label,
+          done,
+          total,
+          note,
+        }),
+        signal: controller.signal,
+      }).catch(() => {});
+    };
     setLog([]);
     setFindings([]);
     setSummary(null);
@@ -147,7 +227,21 @@ export function useScan() {
         pages: string[];
         error?: string;
         remaining?: number;
+        live?: LiveScan;
+        lastScan?: ScanSummary | null;
       }>("/api/scan/seed", {});
+
+      if (seed.error === "busy") {
+        setLive(seed.live ?? null);
+        setLiveMine(false);
+        if (seed.lastScan) {
+          setSummary(seed.lastScan);
+          setFindings(seed.lastScan.findings);
+        }
+        setPhase("watching");
+        say("已經有人在掃描，畫面會跟著更新。", "warn");
+        return;
+      }
 
       if (seed.error === "cooldown") {
         setCooldown(seed.remaining ?? 0);
@@ -170,6 +264,13 @@ export function useScan() {
 
       // ---- pages: breadth-first until nothing new turns up ----
       setPhase("pages");
+      beat(
+        "爬取頁面",
+        0,
+        seed.pages.length,
+        `種子頁面 ${seed.pages.length} 個`,
+        true
+      );
       const seen = new Set(seed.pages);
       const frontier = [...seed.pages];
       const resourceRefs = new Map<string, Set<string>>();
@@ -228,6 +329,12 @@ export function useScan() {
           done: pagesDone,
           total: seen.size,
         });
+        beat(
+          "爬取頁面",
+          pagesDone,
+          seen.size,
+          `頁面 ${pagesDone}/${seen.size}，已找到 ${resourceRefs.size} 個資源`
+        );
         say(
           `頁面 ${pagesDone}/${seen.size}，已找到 ${resourceRefs.size} 個資源`,
           "info"
@@ -281,6 +388,12 @@ export function useScan() {
           done: resourcesDone,
           total: resourceUrls.length,
         });
+        beat(
+          "檢查資源",
+          resourcesDone,
+          resourceUrls.length,
+          `資源 ${resourcesDone}/${resourceUrls.length}`
+        );
         if (resourcesDone % 200 < BATCH.resources) {
           say(`資源 ${resourcesDone}/${resourceUrls.length}`, "info");
         }
@@ -321,6 +434,12 @@ export function useScan() {
           done: archivesDone,
           total: uniqueArchives.length,
         });
+        beat(
+          "解壓壓縮檔",
+          archivesDone,
+          uniqueArchives.length,
+          `壓縮檔 ${archivesDone}/${uniqueArchives.length}`
+        );
       }
       say(`壓縮檔檢查完成，共 ${archivesDone} 個`, "good");
 
@@ -347,11 +466,18 @@ export function useScan() {
             pages: [...(emailRefs.get(result.address) ?? [])],
           });
         }
+        const emailsDone = Math.min(index + BATCH.emails, addresses.length);
         setProgress({
           label: "檢查 email",
-          done: Math.min(index + BATCH.emails, addresses.length),
+          done: emailsDone,
           total: addresses.length,
         });
+        beat(
+          "檢查 email",
+          emailsDone,
+          addresses.length,
+          `email ${emailsDone}/${addresses.length}`
+        );
       }
 
       if (undefinedSubjects > 0) {
@@ -385,7 +511,9 @@ export function useScan() {
         suspect: all.filter((f) => f.severity === "suspect").length,
         findings: all,
       };
+      // Saving also retracts the live broadcast, server-side.
       await post("/api/scan/result", result);
+      setLive(null);
       setSummary(result);
       setFindings(all);
       setPhase("done");
@@ -397,19 +525,21 @@ export function useScan() {
       );
     } catch (error) {
       if (controller.signal.aborted) return;
+      retract();
       setPhase("error");
       say(
         `掃描中斷：${error instanceof Error ? error.message : String(error)}`,
         "bad"
       );
     }
-  }, [say]);
+  }, [retract, say]);
 
   const stop = React.useCallback(() => {
     abort.current?.abort();
+    retract();
     setPhase("idle");
     say("已取消掃描", "warn");
-  }, [say]);
+  }, [retract, say]);
 
   const running =
     phase === "seeding" ||
@@ -422,12 +552,15 @@ export function useScan() {
   return {
     phase,
     running,
+    watching: phase === "watching",
     log,
     progress,
     findings,
     summary,
     cooldown,
     shared,
+    live,
+    liveMine,
     start,
     stop,
   };

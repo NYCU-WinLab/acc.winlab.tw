@@ -89,6 +89,23 @@ export interface ControlFingerprint {
   bogusPageStatus: number;
 }
 
+/**
+ * A scan currently in flight, published so other visitors see it instead of an
+ * idle button. The browser driving the scan refreshes this; the key's TTL is the
+ * liveness check, so a closed tab clears itself without any cleanup call.
+ */
+export interface LiveScan {
+  startedAt: string;
+  /** Current phase in Chinese, e.g. "爬取頁面". */
+  label: string;
+  done: number;
+  total: number;
+  /** The latest log line, so onlookers see movement. */
+  note: string;
+  /** Salted visitor hash of whoever is driving it. */
+  by: string;
+}
+
 export interface ScanSummary {
   startedAt: string;
   finishedAt: string;
