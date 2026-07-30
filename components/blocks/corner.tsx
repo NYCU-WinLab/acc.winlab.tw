@@ -19,7 +19,11 @@ export function Corner({ at, className, ...props }: CornerProps) {
   return (
     <div
       data-slot="corner"
-      className={cn("fixed z-50 p-6", positions[at], className)}
+      className={cn(
+        "fixed z-50 p-6 font-mono text-sm text-foreground/60",
+        positions[at],
+        className
+      )}
       {...props}
     />
   );
