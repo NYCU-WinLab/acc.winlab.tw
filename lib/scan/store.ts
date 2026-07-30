@@ -21,8 +21,11 @@ const LIVE_TTL_SECONDS = 90;
  * That keeps local development and a first deploy unblocked.
  */
 function client(): Redis | null {
-  const url = process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  // Vercel's Upstash integration injects KV_REST_API_*; UPSTASH_REDIS_REST_* is
+  // what a hand-made Upstash database hands you. Accept either.
+  const url = process.env.KV_REST_API_URL ?? process.env.UPSTASH_REDIS_REST_URL;
+  const token =
+    process.env.KV_REST_API_TOKEN ?? process.env.UPSTASH_REDIS_REST_TOKEN;
   if (!url || !token) return null;
   return new Redis({ url, token });
 }
