@@ -37,6 +37,11 @@ yarn-error.log*
 # vercel
 .vercel
 
+# agent skills vendored by `vercel integration add` — kept on disk, not in git
+/.agents/
+/.claude/skills/upstash-*
+/skills-lock.json
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
