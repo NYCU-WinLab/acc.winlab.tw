@@ -1,11 +1,4 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "regions": ["hnd1"],
-  "functions": {
-    "app/api/scan/archives/route.ts": { "maxDuration": 120 },
-    "app/api/scan/pages/route.ts": { "maxDuration": 60 },
-    "app/api/scan/resources/route.ts": { "maxDuration": 60 },
-    "app/api/scan/seed/route.ts": { "maxDuration": 60 },
-    "app/api/scan/emails/route.ts": { "maxDuration": 60 }
-  }
+  "regions": ["hnd1"]
 }

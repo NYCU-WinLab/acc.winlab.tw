@@ -6,7 +6,8 @@ import { target } from "@/lib/scan/target";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 120;
+// 60s is the Hobby-plan ceiling; a batch of 8 archives finishes well inside it.
+export const maxDuration = 60;
 
 const MAX_BATCH = 12;
 
